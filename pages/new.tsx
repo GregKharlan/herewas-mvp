@@ -1,86 +1,154 @@
-import { useState } from 'react';
-import type { NextPage } from 'next';
-import Head from 'next/head';
+import { useState, FormEvent } from 'react';
 import { supabase } from '../utils/supabaseClient';
+import { useRouter } from 'next/router';
+import { useSession } from '@supabase/auth-helpers-react';
+import NavBar from '../components/NavBar';
 
-const NewPost: NextPage = () => {
+export default function NewPost() {
   const [text, setText] = useState('');
+  const [files, setFiles] = useState<FileList | null>(null);
+  // TTL in minutes: default 1 day (1440 minutes)
   const [ttl, setTtl] = useState(1440);
   const [visibility, setVisibility] = useState<'public' | 'followers'>('public');
+  const session = useSession();
+  const router = useRouter();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!session) {
+      router.push('/login');
+      return;
+    }
+
     try {
-      const position = await new Promise<any>((resolve, reject) => {
+      // Get user's location
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject);
       });
       const { latitude, longitude } = position.coords;
-      let liveUntil: string | null = null;
-      if (ttl > 0) {
-        const until = new Date(Date.now() + ttl * 60 * 1000);
-        liveUntil = until.toISOString();
+
+      // Compute live_until if TTL provided (>=5 minutes)
+      const liveFrom = new Date();
+      const isEphemeral = ttl > 0;
+      const liveUntil = isEphemeral
+        ? new Date(liveFrom.getTime() + ttl * 60 * 1000)
+        : null;
+
+      // Insert post
+      const { data: insertedPost, error: postError } = await supabase
+        .from('posts')
+        .insert({
+          text: text || null,
+          visibility,
+          is_ephemeral: isEphemeral,
+          live_from: liveFrom.toISOString(),
+          live_until: liveUntil ? liveUntil.toISOString() : null,
+          location: `POINT(${longitude} ${latitude})`,
+          location_source: 'device',
+        })
+        .select()
+        .single();
+
+      if (postError || !insertedPost) {
+        console.error(postError);
+        alert('Error creating post');
+        return;
       }
-      const { error } = await supabase.from('posts').insert({
-        text,
-        visibility,
-        is_ephemeral: liveUntil !== null,
-        live_until: liveUntil,
-        location: 'POINT(' + longitude + ' ' + latitude + ')',
-        location_source: 'device',
-      });
-      if (error) throw error;
-      setText('');
-      alert('Post created');
-    } catch (err) {
-      console.error(err);
-      alert('Failed to create post');
+
+      // Upload up to 3 images
+      if (files) {
+        for (let i = 0; i < Math.min(files.length, 3); i++) {
+          const file = files[i];
+          const filePath = `${insertedPost.id}/${Date.now()}_${file.name}`;
+          const { error: uploadError } = await supabase.storage
+            .from('post-images')
+            .upload(filePath, file);
+          if (!uploadError) {
+            // Save media record
+            await supabase.from('post_media').insert({
+              post_id: insertedPost.id,
+              url: filePath,
+              width: null,
+              height: null,
+              exif: null,
+              order_index: i,
+            });
+          } else {
+            console.error(uploadError);
+          }
+        }
+      }
+
+      // Redirect to feed after successful creation
+      router.push('/feed');
+    } catch (error) {
+      console.error(error);
+      alert('Error creating post. Please ensure location access is enabled.');
     }
   };
 
+  if (!session) {
+    return (
+      <>
+        <NavBar />
+        <main className="p-4">
+          <p>Please log in to create a post.</p>
+        </main>
+      </>
+    );
+  }
+
   return (
     <>
-      <Head>
-        <title>New Post</title>
-      </Head>
-      <main className="container mx-auto p-4">
-        <h1 className="text-2xl font-bold mb-4">New Post</h1>
+      <NavBar />
+      <div className="p-4">
+        <h1 className="text-2xl font-bold mb-4">Create a New Post</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <textarea
+            className="w-full p-2 border rounded"
+            maxLength={250}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            maxLength={250}
-            className="w-full p-2 border rounded"
             placeholder="What's on your mind?"
           />
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={(e) => setFiles(e.target.files)}
+          />
           <div>
-            <label className="block mb-1">Time to live (minutes, 5-10080):</label>
-            <input
-              type="number"
-              min={5}
-              max={10080}
-              value={ttl}
-              onChange={(e) => setTtl(Number(e.target.value))}
-              className="w-full p-2 border rounded"
-            />
-          </div>
-          <div>
-            <label className="block mb-1">Visibility:</label>
+            <label className="mr-2">Visibility:</label>
             <select
               value={visibility}
-              onChange={(e) => setVisibility(e.target.value as 'public' | 'followers')}
-              className="w-full p-2 border rounded"
+              onChange={(e) =>
+                setVisibility(e.target.value as 'public' | 'followers')
+              }
+              className="border p-1"
             >
               <option value="public">Public</option>
               <option value="followers">Followers</option>
             </select>
           </div>
-          <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded">
+          <div>
+            <label className="mr-2">Time to Live (minutes):</label>
+            <input
+              type="number"
+              min={5}
+              max={10080}
+              value={ttl}
+              onChange={(e) => setTtl(parseInt(e.target.value, 10))}
+              className="border p-1"
+            />
+          </div>
+          <button
+            type="submit"
+            className="px-4 py-2 bg-blue-500 text-white rounded"
+          >
             Submit
           </button>
         </form>
-      </main>
+      </div>
     </>
   );
-};
-
-export default NewPost;
+}
