@@ -1,6 +1,6 @@
 import { NextPage } from 'next';
 import { supabase } from '../utils/supabaseClient';
-import NavBar from '../components/NavBar';
+import NavBar from '../components/NavBar.tsx';
 
 const Login: NextPage = () => {
   const handleSignIn = async () => {
