@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSession } from '@supabase/auth-helpers-react';
 import { supabase } from '../utils/supabaseClient';
-import NavBar from '../components/NavBar.tsx';
+import NavBar from '../components/NavBar';
 
 interface Post {
   id: string;
