@@ -2,7 +2,7 @@ import { useState, FormEvent } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import { useRouter } from 'next/router';
 import { useSession } from '@supabase/auth-helpers-react';
-import NavBar from '../components/NavBar';
+import NavBar from '../components/NavBar.tsx';
 
 export default function NewPost() {
   const [text, setText] = useState('');
